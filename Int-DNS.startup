@@ -1,0 +1,93 @@
+# Int-DNS - internal DNS server machine on server LAN
+
+# === network iface config === #
+# LAN iface config
+ifconfig eth0 hw ether 02:60:ac:89:ab:bb
+ifconfig eth0 10.10.3.2/24
+route add default gw 10.10.3.1
+# ============================ #
+
+
+# === DNS config === #
+service dnsmasq start
+# ================== #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ----------------------------------- #
+# ----- Int-DNS firewall rules ------ #
+# ----------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I INPUT 2 -m state --state INVALID -j DROP
+iptables -I OUTPUT 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+
+# === DNS traffic rules === #
+#### receive DNS traffic from Remote Access zone, all 3 internal VLANs, admin zone to Int-DNS (auto stateful send)
+# for TCP
+iptables -A INPUT -i eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24,10.10.4.0/24,10.10.33.0/24,10.10.5.0/24 \
+	-p tcp --dport 53 \
+	-m comment --comment "inbound DNS (TCP) from Remote Access & internal VLANs" \
+	-j ACCEPT	
+# for UDP
+iptables -A INPUT -i eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24,10.10.4.0/24,10.10.33.0/24,10.10.5.0/24 \
+	-p udp --dport 53 \
+	-m comment --comment "inbound DNS (TCP) from Remote Access& internal VLANs" \
+	-j ACCEPT	
+# ============================================= #
+
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+# -------------------------------------- #

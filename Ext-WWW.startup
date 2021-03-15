@@ -1,0 +1,13 @@
+# Ext-WWW - external web server, Internet-connected
+
+
+# === network iface config === #
+ifconfig eth0 201.224.19.7/16
+route add default gw 201.224.131.22
+
+
+# === apache2 web server config === #
+a2enmod ssl
+a2ensite default-ssl
+service apache2 start
+# ================================= #

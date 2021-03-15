@@ -1,0 +1,70 @@
+# Int-A0 - access network switch for MEME's Internal network subnet
+
+# for each of the eight NICs eth1 .. eth8
+for i in $(seq 8)
+do
+  # give it  its own MAC address (3com Europe)
+  ip link set dev eth${i} address 08:00:4e:a0:a0:0${i}
+  # put it into a group (42 is arbirary) so they can be treated the same
+  ip link set dev eth${i} group 42
+done
+
+# create the bridge named sw0 (typically br0 in online examples)
+ip link add sw0 type bridge
+ip link set dev sw0 address 08:00:4e:a0:a0:00
+
+# using group operations:
+# make all of the network cards part of the switch 
+ip link set group 42 master sw0
+
+# bring each device up
+ip link set group 42 up
+
+# set each device to be promiscuous (so not restricted to own MAC address)
+ip link set group 42 promisc on
+
+# ensure spanning tree is active incase we get loops
+brctl stp sw0 on
+brctl setbridgeprio sw0 144
+
+
+# ensure  sw0 is vlan-aware
+echo "1" > /sys/class/net/sw0/bridge/vlan_filtering
+
+# associate ports 1 and 2 with vlan id 111 (executive VLAN)
+for i in 1 2
+do
+  bridge vlan add vid 111 pvid untagged dev eth${i} 
+done
+
+# associate ports 3 and 4 ports with vlan id 222 (employee VLAN)
+for i in 3 4 
+do
+  bridge vlan add vid 222 pvid untagged dev eth${i}
+done
+
+# associate ports 5 and 6 ports with vlan id 333 (secured VLAN)
+for i in 5 6
+do
+  bridge vlan add vid 333 pvid untagged dev eth${i}
+done
+
+
+# associate all possible non-default vlans with the inter-switch ports 7 & 8
+bridge vlan add vid 2-4094 dev eth7
+bridge vlan add vid 2-4094 dev eth8
+
+# lastly, bring the bridge up
+ip link set dev sw0 up
+
+
+
+
+
+
+
+
+
+
+
+

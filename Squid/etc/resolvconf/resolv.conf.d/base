@@ -1,0 +1,6 @@
+# meme additions
+#nameserver 10.10.3.2
+#search meme.cyber.test
+
+# use external DNS server
+nameserver 8.8.8.8

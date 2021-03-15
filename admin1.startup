@@ -1,0 +1,58 @@
+# admin1 - adminstrater machine on admin LAN
+
+# === LAN iface config === #
+ifconfig eth0 10.10.5.201/24
+ifconfig eth0 hw ether 02:60:ac:9a:b3:f2
+route add default gw 10.10.5.1
+# ======================== #
+
+
+# === SSH config === #
+# change permission on private SSH key
+chmod 600 /root/.ssh/id_rsa
+# ===================== #
+
+
+# ---------------------------------- #
+# ---- admin1  firewall rules ------ #
+# ---------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I INPUT 2 -m state --state INVALID -j DROP
+iptables -I OUTPUT 2 -m state --state INVALID -j DROP
+# ===================== #
+
+
+# === DNS traffic rules === #
+#### send DNS traffic to Int-DNS
+# using UDP
+iptables -A OUTPUT -o eth0 -d 10.10.3.2 -p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic" \
+	-j ACCEPT
+# using TCP
+iptables -A OUTPUT -o eth0 -d 10.10.3.2 -p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic" \
+	-j ACCEPT
+# ============================================= #
+
+
+# === management traffic === #
+#### send SSH traffic 
+iptables -A OUTPUT -o eth0 -d 10.0.0.0/8,192.168.1.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #

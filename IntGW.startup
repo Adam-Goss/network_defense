@@ -1,0 +1,278 @@
+# IntGW - internal LAN's gateway machine to PerimF (perimeter firewall)
+
+
+# === network iface config === #
+# iface connected to internal LAN - executive VLAN
+ifconfig eth0 10.10.1.1/24
+ifconfig eth0 hw ether 1a:1b:1c:af:aa:a2
+
+# iface connected to perimeter firewall (PerimF)
+ifconfig eth1 192.168.1.101/24
+ifconfig eth1 hw ether 80:80:80:82:82:82
+
+# PerimF = default gateway
+route add default gw 192.168.1.1
+# ============================= #
+
+
+# === vlan interfaces === #
+# vlan iface connected to executive VLAN
+ip link add link eth0 name eth0.111 type vlan id 111
+ip addr add 10.10.11.1/24 dev eth0.111
+ip link set dev eth0.111 up
+ifconfig eth0.111 mtu 1000
+
+# vlan iface connected to employee VLAN
+ip link add link eth0 name eth0.222 type vlan id 222
+ip addr add 10.100.0.1/16 dev eth0.222
+ip link set dev eth0.222 up
+ifconfig eth0.222 mtu 1000
+
+# vlan iface connected to employee VLAN secured VLAN
+ip link add link eth0 name eth0.333 type vlan id 333
+ip addr add 10.10.33.1/24 dev eth0.333
+ip link set dev eth0.333 up
+ifconfig eth0.333 mtu 1000
+# ========================= #
+
+
+# === vlan rooting === #
+# route to executive vlan
+ip route add 10.10.11.0/24 via 10.10.11.1 dev eth0.111 mtu 1000
+# route to employee vlan
+ip route add 10.100.0.0/16 via 10.100.0.1 dev eth0.222 mtu 1000
+# route to secured vlan
+ip route add 10.10.33.0/24 via 10.10.33.1 dev eth0.333
+# ====================== #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ------------------------------------- #
+# ------ iptables firewall rules ------ #
+# ------------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I FORWARD 2 -m state --state INVALID -j DROP
+# ==================================================== #
+
+# === Secured VLAN rules === #
+#### forward LDAP traffic to LDAP server from Executive and Employee VLANs
+# Executive VLAN -- TCP
+iptables -A FORWARD -i eth0.111 -o eth0.333 -s 10.10.11.0/24 -d 10.10.33.2 \
+	-p tcp -m multiport --dports 389,636 \
+	-m comment --comment "inbound LDAP (TCP) traffic from Executive VLAN" \
+	-j ACCEPT
+# Executive VLAN -- UDP
+iptables -A FORWARD -i eth0.111 -o eth0.333 -s 10.10.11.0/24 -d 10.10.33.2 \
+	-p udp -m multiport --dports 389,636 \
+	-m comment --comment "inbound LDAP (UDP) traffic from Executive VLAN" \
+	-j ACCEPT
+# Employee VLAN -- TCP
+iptables -A FORWARD -i eth0.222 -o eth0.333 -s 10.100.0.0/16 -d 10.10.33.2 \
+	-p tcp -m multiport --dports 389,636 \
+	-m comment --comment "inbound LDAP (TCP) traffic from Employee VLAN" \
+	-j ACCEPT
+# Employee VLAN -- UDP
+iptables -A FORWARD -i eth0.222 -o eth0.333 -s 10.100.0.0/16 -d 10.10.33.2 \
+	-p udp -m multiport --dports 389,636 \
+	-m comment --comment "inbound LDAP (UDP) traffic from Employee VLAN" \
+	-j ACCEPT
+	
+#### forward DHCP traffic to DHCP server from Executive and Employee VLANs
+# Executive VLAN -- TCP
+iptables -A FORWARD -i eth0.111 -o eth0.333 -s 10.10.11.0/24 -d 10.10.33.3 \
+	-p tcp -m multiport --dports 67,68 \
+	-m comment --comment "inbound DHCP (TCP) traffic from Executive VLAN" \
+	-j ACCEPT
+# Executive VLAN -- UDP
+iptables -A FORWARD -i eth0.111 -o eth0.333 -s 10.10.11.0/24 -d 10.10.33.3 \
+	-p udp -m multiport --dports 67,68 \
+	-m comment --comment "inbound DHCP (UDP) traffic from Executive VLAN" \
+	-j ACCEPT
+# Employee VLAN -- TCP
+iptables -A FORWARD -i eth0.222 -o eth0.333 -s 10.100.0.0/16 -d 10.10.33.3 \
+	-p tcp -m multiport --dports 67,68 \
+	-m comment --comment "inbound DHCP (TCP) traffic from Employee VLAN" \
+	-j ACCEPT
+# Employee VLAN -- UDP
+iptables -A FORWARD -i eth0.222 -o eth0.333 -s 10.100.0.0/16 -d 10.10.33.3 \
+	-p udp -m multiport --dports 67,68 \
+	-m comment --comment "inbound DHCP (UDP) traffic from Employee VLAN" \
+	-j ACCEPT	
+		
+#### forward internal DNS traffic from LDAP and DHCP servers to Int-DNS
+# for TCP
+iptables -A FORWARD -i eth0.333 -o eth1 \
+	-s 10.10.33.2,10.10.33.3 -d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from LDAP & DHCP" \
+	-j ACCEPT
+# for UDP
+iptables -A FORWARD -i eth0.333 -o eth1 \
+	-s 10.10.33.2,10.10.33.3 -d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from LDAP & DHCP" \
+	-j ACCEPT
+# ==================================================== #
+
+
+
+# === Employee VLAN rules === #
+#### forward unencrypted Wireguard traffic from WireGuardVPN
+iptables -A FORWARD -i eth1 -o eth0.222 \
+	-s 10.10.4.3 -d 10.100.0.0/16 \
+	-m comment --comment "inbound unencrypted Wireguard traffic from WireGuardVPN" \
+	-j ACCEPT 
+	
+#### forward IMAP to Mail server from Employee VLAN
+iptables -A FORWARD -i eth0.222 -o eth1 \
+	-s 10.100.0.0/16 -d 10.10.2.3 \
+	-m comment --comment "outbound IMAP traffic to Mail server" \
+	-j ACCEPT
+
+#### forward DNS traffic from Employee VLAN to Int-DNS
+# for TCP
+iptables -A FORWARD -i eth0.222 -o eth1 \
+	-s 10.100.0.0/16 -d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from Employee VLAN" \
+	-j ACCEPT
+# for UDP
+iptables -A FORWARD -i eth0.222 -o eth1 \
+	-s 10.100.0.0/16 -d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from Employee VLAN" \
+	-j ACCEPT
+	
+#### forward squid proxy traffic from Employee VLAN to Squid proxy server
+#iptables -A FORWARD -i eth0.222 -o eth1 \
+#	-s 10.100.0.0/16 -d 10.10.3.3 \
+#	-p tcp -m multiport --dports 3128,3129 \
+#	-m comment --comment "outbound Squid proxy traffic from Employee" \
+#	-j ACCEPT
+iptables -A FORWARD -i eth0.222 -o eth1 \
+	-s 10.100.0.0/16 -d 10.10.3.3 \
+	-m comment --comment "outbound Squid proxy traffic from Employee" \
+	-j ACCEPT
+iptables -A FORWARD -o eth0.222 -i eth1 \
+	-d 10.100.0.0/16 -s 10.10.3.3 \
+	-m comment --comment "outbound Squid proxy traffic from Employee" \
+	-j ACCEPT
+# ==================================================== #
+
+
+
+# === Executive VLAN rules === #
+#### forward unencrypted OpenVPN traffic to Executive VLAN
+iptables -A FORWARD -i eth1 -o eth0.111 \
+	-s 10.10.4.2 -d 10.10.11.0/24 \
+	-m comment --comment "inbound unencrypted OpenVPN traffic from OpenVPN" \
+	-j ACCEPT
+	
+#### forward IMAP to Mail server from Executive VLAN
+iptables -A FORWARD -i eth0.111 -o eth1 \
+	-s 10.10.11.0/24 -d 10.10.2.3 \
+	-m comment --comment "outbound IMAP traffic to Mail server" \
+	-j ACCEPT
+
+#### forward DNS traffic from Executive VLAN to Int-DNS
+# for TCP
+iptables -A FORWARD -i eth0.111 -o eth1 \
+	-s 10.10.11.0/24 -d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from Executive VLAN" \
+	-j ACCEPT
+# for UDP
+iptables -A FORWARD -i eth0.111 -o eth1 \
+	-s 10.10.11.0/24 -d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from Executive VLAN" \
+	-j ACCEPT
+	
+#### forward squid proxy traffic from Employee VLAN to Squid proxy server
+#iptables -A FORWARD -i eth0.111 -o eth1 \
+#	-s 10.10.11.0/24 -d 10.10.3.3 \
+#	-p tcp -m multiport --dports 3128,3129 \
+#	-m comment --comment "outbound Squid proxy traffic from Executive VLAN" \
+#	-j ACCEPT
+iptables -A FORWARD -i eth0.111 -o eth1 \
+	-s 10.10.11.0/24 -d 10.10.3.3 \
+	-m comment --comment "outbound Squid proxy traffic from Executive VLAN" \
+	-j ACCEPT
+
+iptables -A FORWARD -o eth0.111 -i eth1 \
+	-d 10.10.11.0/24 -s 10.10.3.3 \
+	-m comment --comment "inbound Squid proxy traffic from Executive VLAN" \
+	-j ACCEPT
+# ==================================================== #
+
+
+
+# === SSH traffic === #
+#### forward SSH traffic from Admin zone to other zones
+iptables -A FORWARD \
+	-i eth1 \
+	-s 10.10.5.0/24 -d 10.10.11.0/24,10.100.0.0/16,10.10.33.0/24\
+	-p tcp --dport 22 \
+	-m comment --comment "SSH from admin zone" \
+# ==================================================== #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic -- need to SSH 10.10.1.1 iface addresss
+iptables -A INPUT \
+	-i eth1 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth1 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ==================================================== #
+
+# -------------------------------------- #
+
+
+
+
+
+
+
+
+
+
+

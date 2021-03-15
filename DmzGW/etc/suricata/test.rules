@@ -1,0 +1,2 @@
+#alert ip 22.39.224.18 any -> any any (msg:"notorious IP address"; classtype:bad-unknown; sid:2100498; rev:7; metadata:created_at 2021_02_16, updated_at 2021_02_16;)
+#alert tcp $EXTERNAL_NET any -> $HTTP_SERVERS $HTTP_PORTS (msg:"Web admin zone lookup"; content:"/admin.html"; http_uri; classtype:attempted-recon; sid:2100499; rev:7; metadata:created_at 2021_02_16, updated_at 2021_02_16;)

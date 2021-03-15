@@ -1,0 +1,24 @@
+# Internet - represents the generic Internet with several assets/devices connected through it 
+
+
+# === network iface config === #
+# ifaces for each subnet (public IP range) connected to it
+ifconfig eth0 201.224.131.22/16
+ifconfig eth1 8.8.8.1/24
+ifconfig eth2 22.39.224.17/30
+ifconfig eth3 137.205.157.254/16
+
+# iface for Australian collaborator
+ifconfig eth4 66.66.66.1/24
+# ============================ #
+
+
+# === routing === #
+# route to MEME 
+route add -net 137.205.0.0/16 gw 137.205.1.1
+# =============== #
+
+
+
+
+

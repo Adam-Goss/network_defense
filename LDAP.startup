@@ -1,0 +1,136 @@
+# LDAP - LDAP server machine on internal LAN, part of secured VLAN
+
+
+# === network iface config === #
+# LAN iface config 
+ifconfig eth0 hw ether 02:60:ac:4f:a9:a4
+ifconfig eth0 10.10.33.2/24
+route add default gw 10.10.33.1
+# ============================ #
+
+
+# === LDAP server config === #
+# mimic LDAP server open ports
+while true; do nc -lvp 389;done &
+while true; do nc -ulvp 389;done &
+while true; do nc -lvp 636;done &
+while true; do nc -ulvp 636;done &
+# ============================ #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ------------------------------------- #
+# ------ iptables firewall rules ------ #
+# ------------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I INPUT 2 -m state --state INVALID -j DROP
+iptables -I OUTPUT 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === LDAP machine specific rules === #
+#### recieve LDAP traffic from Executive and Employee VLANs
+# for TCP
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.11.0/24,10.100.0.0/16 \
+	-p tcp -m multiport --dports 389,636 \
+	-m comment --comment "recieve LDAP (TCP) from Executive & Employee VLANs" \
+	-j ACCEPT
+# for UDP
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.11.0/24,10.100.0.0/16 \
+	-p udp -m multiport --dports 389,636 \
+	-m comment --comment "recieve LDAP (UDP) from Executive & Employee VLANs" \
+	-j ACCEPT
+	
+#### send LDAP traffic to Executive and Employee VLANs
+# for TCP
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.11.0/24,10.100.0.0/16 \
+	-p tcp -m multiport --sports 389,636 \
+	-m comment --comment "send LDAP (TCP) to Executive & Employee VLANs" \
+	-j ACCEPT	
+# for UDP
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.11.0/24,10.100.0.0/16 \
+	-p udp -m multiport --sports 389,636 \
+	-m comment --comment "send LDAP (UDP) to Executive & Employee VLANs" \
+	-j ACCEPT
+
+#### send DNS traffic to Int-DNS
+# for TCP
+iptables -A OUTPUT -o eth0 -d 10.10.3.2 -p tcp --dport 53 \
+	-m comment --comment "send DNS (TCP) to Int-DNS" \
+	-j ACCEPT	
+# for UDP
+iptables -A OUTPUT -o eth0 -d 10.10.3.2 -p udp --dport 53 \
+	-m comment --comment "send DNS (UDP) to Int-DNS" \
+	-j ACCEPT
+# ==================== #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic -- need to SSH 10.10.1.1 iface addresss
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ==================== #
+
+# -------------------------------------- #
+
+
+
+
+
+
+
+
+
+
+
+

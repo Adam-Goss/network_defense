@@ -1,0 +1,27 @@
+# lab.dep - defines machine dependencies for this lab
+
+
+# -------------------------------------------- #
+
+# --- for generic Internet --- #
+Ext-WWW: Internet
+Ext-DNS: Internet
+Ext-Office: Internet
+AusCollab: Internet
+
+
+# --- for MEME network --- #
+Perimf: Internet 
+
+IntGW: PerimF
+DmzGW: PerimF
+SrvGW: PerimF
+RemoteAccessGW: PerimF
+AdminGW: PerimF
+
+staff1:
+staff2:
+staff3:
+LDAP:
+DHCP:
+# -------------------------------------------- #

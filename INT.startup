@@ -1,0 +1,41 @@
+# INT - switch connected all hosts within the internal LAN
+
+for i in $(seq 0 5)
+do
+  # give it  its own MAC address (3com Europe)
+  ip link set dev eth${i} address 08:00:4e:a0:a0:0${i}
+  # put it into a group (42 is arbirary) so they can be treated the same
+  ip link set dev eth${i} group 42
+done
+
+# create the bridge named sw0 (typically br0 in online examples)
+ip link add sw0 type bridge
+ip link set dev sw0 address 08:00:4e:a0:a0:00
+
+# using group operations:
+# make all of the network cards part of the switch 
+ip link set group 42 master sw0
+
+# bring each device up
+ip link set group 42 up
+
+# set each device to be promiscuous (so not restricted to own MAC address)
+ip link set group 42 promisc on
+
+# ensure spanning tree is active incase we get loops
+brctl stp sw0 on
+brctl setbridgeprio sw0 144
+
+# ensure  sw0 is vlan-aware - this feels like a hack
+echo "1" > /sys/class/net/sw0/bridge/vlan_filtering
+
+# make all ports carry all non-default vlan traffic
+for i in $(seq 0 5)
+do
+  bridge vlan add vid 2-4094 dev eth${i}
+done
+
+# lastly, bring the bridge up
+ip link set dev sw0 up
+
+

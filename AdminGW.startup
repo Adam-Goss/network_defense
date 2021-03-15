@@ -1,0 +1,87 @@
+# AdminGW - admin LAN's gateway machine to PerimF (perimeter firewall)
+
+
+# === network iface config === #
+# iface connected to admin LAN 
+ifconfig eth0 10.10.5.1/24
+ifconfig eth0 hw ether 1a:1b:1c:a5:a5:a5
+
+# iface connected to perimeter firewall (PerimF)
+ifconfig eth1 192.168.1.105/24
+ifconfig eth1 hw ether 80:80:80:85:85:85
+
+# PerimF = default gateway
+route add default gw 192.168.1.1
+# ============================= #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# -------------------------------- #
+# ---- Admin firewall rules ------ #
+# -------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I FORWARD 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === DNS traffic rules === #
+#### forward DNS traffic to Int-DNS from Remote Access zone
+# using UDP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.5.0/24 -d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Admin zone" \
+	-j ACCEPT
+# using TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.5.0/24 -d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from Admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+
+# === SSH traffic === #
+#### forward SSH traffic from Admin zone to other zones
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.5.0/24 -d 10.0.0.0/8,192.168.1.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "SSH from admin zone" \
+	-j ACCEPT
+# ==================== #
+
+# -------------------------------------- #
+
+

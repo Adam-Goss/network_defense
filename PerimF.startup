@@ -1,0 +1,450 @@
+# PermiF - perimeter firewall machine, gateway to Internet
+
+
+# === network iface config === #
+# iface to perimeter LAN
+ifconfig eth0 192.168.1.1/24
+ifconfig eth0 hw ether 40:1a:f0:a3:a3:a3
+
+# iface to Interent
+ifconfig eth1 137.205.1.1/16
+ifconfig eth1 hw ether 40:1a:f0:aa:ab:ba
+# ============================ #
+
+
+# === routing among permimeter LANs === #
+# internal LAN (INT switch)
+route add -net 10.10.1.0/24 gw 192.168.1.101
+# internal LAN (VLANs)
+route add -net 10.10.11.0/24 gw 192.168.1.101
+route add -net 10.100.0.0/16 gw 192.168.1.101
+route add -net 10.10.33.0/24 gw 192.168.1.101
+
+# DMZ LAN (DMZ switch)
+route add -net 10.10.2.0/24 gw 192.168.1.102
+# server LAN (SRV switch)
+route add -net 10.10.3.0/24 gw 192.168.1.103
+# remote access LAN (RemoteAccess switch)
+route add -net 10.10.4.0/24 gw 192.168.1.104
+# admin LAN (ADMIN switch)
+route add -net 10.10.5.0/24 gw 192.168.1.105
+# ====================================== #
+
+
+# === general routing === #
+# to internet 
+route add default gw 137.205.157.254
+# ======================= #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ------------------------------------- #
+# ------ iptables firewall rules ------ #
+# ------------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I FORWARD 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === web traffic === #
+#### forward web traffic to internal web server Int-WWWW 
+# negate 10.0.0.0/8 IP range - only accessed by external IP addresses
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.2.2 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "inbound web traffic to Int-WWW" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range - only accessed by external IP addresses
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.2.2 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "inbound web traffic to Int-WWW" \
+	-j ACCEPT
+	
+#### forward web traffic from Int-WWW web server to external web services
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.2.2 ! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Int-WWW" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.2.2 ! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Int-WWW" \
+	-j ACCEPT
+
+	
+#### forward web traffic from Squid proxy web server to external IP addresses
+# negate 10.0.0.0/8 IP range
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.3.3 ! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound web traffic from Squid" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.3.3 ! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound web traffic from Squid" \
+	-j ACCEPT
+	
+#### forward Squid proxy traffic from internal network to Squid
+# traffic to Squid from Executive and Employee VLANs
+#iptables -A FORWARD \
+#	-i eth0 -o eth0 \
+#	-s 10.100.0.0/16,10.10.11.0/24 -d 10.10.3.3 \
+#	-p tcp -m multiport --dports 3128,3129 \
+#	-m comment --comment "inbound Squid proxy traffic" \
+#	-j ACCEPT
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24 -d 10.10.3.3 \
+	-m comment --comment "inbound Squid proxy traffic" \
+	-j ACCEPT
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-d 10.100.0.0/16,10.10.11.0/24 -s 10.10.3.3 \
+	-m comment --comment "outbound Squid proxy traffic" \
+	-j ACCEPT
+	
+#iptables -t nat -A PREROUTING -s 10.10.3.3 -p tcp --dport 80 -j ACCEPT
+#iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 3128
+#iptables -t nat -A POSTROUTING -j MASQUERADE 
+#iptables -t mangle -A PREROUTING -p tcp --dport 3128 -j DROP
+
+# ============================================= #
+
+
+
+# === DNS traffic === #
+#### forward DNS traffic from Squid proxy, Mail, Int-WWW, Remote Access zone web server to 8.8.8.8
+# using UDP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.3.3,10.10.2.3,10.10.2.2,10.10.4.0/24 -d 8.8.8.8 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic Squid/Mail/Int-WWW/Remote Access zone" \
+	-j ACCEPT
+# using TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.3.3,10.10.2.3,10.10.2.2,10.10.4.0/24 -d 8.8.8.8 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic Squid/Mail/Int-WWW/Remote Access z" \
+	-j ACCEPT
+	
+
+#### forward internal DNS traffic
+# to Int-DNS from Remote Access subnet and three internal VLANs
+# for TCP
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24,10.10.4.0/24,10.10.33.0/24,10.10.5.0/24 \
+	-d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "internal DNS traffic (TCP)" \
+	-j ACCEPT
+# for UDP
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24,10.10.4.0/24,10.10.33.0/24,10.10.5.0/24 \
+	-d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "internal DNS traffic (UDP)" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === mail traffic === #
+#### forward SMTP traffic to internal mail server Mail 
+# inbound SMTP connections - negate 10.0.0.0/8 IP range 
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.2.3 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "inbound SMTP from external hosts" \
+	-j ACCEPT
+# inbound SMTP connections - negate 192.168.1.0/24 IP range
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.2.3 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "inbound SMTP from external hosts" \
+	-j ACCEPT
+	
+#### forward SMTP traffic to external mail servers (external hosts) 
+# outbound SMTP connections - negate 10.0.0.0/8 IP range 
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.2.3 ! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "outbound SMTP from to hosts" \
+	-j ACCEPT
+# outbound SMTP connections - negate 192.168.1.0/24 IP range
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.2.3 ! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "outbound SMTP from to hosts" \
+	-j ACCEPT
+
+#### forward email traffic (IMAP) from internal zone to Mail server 
+# internal network hosts from Remote Access subnet and Executive/Employee VLAN traffic to Mail server
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.10.11.0/24,10.100.0.0/8,10.10.4.0/24 -d 10.10.2.3 \
+	-p tcp --dport 993 \
+	-m comment --comment "inbound IMAP from internal hosts" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === VPN traffic === #
+#### forward Wireguard traffic to WireGuardVPN -- inbound
+# inbound Wireguard connections - negate 10.0.0.0/8 IP range 
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.4.3 \
+	-p udp --dport 51820 \
+	-m comment --comment "inbound Wireguard from external hosts" \
+	-j ACCEPT
+# inbound Wireguard connections - negate 192.168.1.0/24 IP range
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.4.3 \
+	-p udp --dport 51820 \
+	-m comment --comment "inbound Wireguard from external hosts" \
+	-j ACCEPT
+	
+#### forward Wireguard traffic to WireGuardVPN -- outbound
+# outbound Wireguard connections - negate 10.0.0.0/8 IP range 
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.4.3 ! -d 10.0.0.0/8 \
+	-p udp --sport 51820 \
+	-m comment --comment "outbound Wireguard from WireGuardVPN" \
+	-j ACCEPT
+# outbound Wireguard connections - negate 192.168.1.0/24 IP range
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.4.3 ! -d 192.168.1.0/24 \
+	-p udp --sport 51820 \
+	-m comment --comment "outbound Wireguard from WireGuardVPN" \
+	-j ACCEPT
+
+
+#### forward to WireGuardVPN Employee VLAN traffic
+# Wireguard connection to Employee VLAN - TCP
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.10.4.3 -d 10.100.0.0/16 \
+	-m comment --comment "Wireguard connect to Employee VLAN" \
+	-j ACCEPT
+
+
+#### forward OpenVPN traffic to OpenVPN -- inbound
+# inbound OpenVPN connections - negate 10.0.0.0/8 IP range - TCP 
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.4.2 \
+	-p tcp --dport 1194 \
+	-m comment --comment "inbound OpenVPN (TCP) from external hosts" \
+	-j ACCEPT
+# inbound OpenVPN connections - negate 192.168.1.0/24 IP range - TCP
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.4.2 \
+	-p tcp --dport 1194 \
+	-m comment --comment "inbound OpenVPN (TCP) from external hosts" \
+	-j ACCEPT
+# inbound OpenVPN connections - negate 10.0.0.0/8 IP range - UDP
+iptables -A FORWARD -i eth1 -o eth0 ! -s 10.0.0.0/8 -d 10.10.4.2 -p udp --dport 1194 -m comment --comment "inbound OpenVPN (UDP) from external hosts" -j ACCEPT
+# inbound OpenVPN connections - negate 192.168.1.0/24 IP range - UDP
+iptables -A FORWARD -i eth1 -o eth0 ! -s 192.168.1.0/24 -d 10.10.4.2 -p udp --dport 1194 -m comment --comment "inbound OpenVPN (UDP) from external hosts" -j ACCEPT
+
+#### forward OpenVPN traffic to OpenVPN -- outbound
+# outbound OpenVPN connections - negate 10.0.0.0/8 IP range - TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.4.2 ! -d 10.0.0.0/8 \
+	-p tcp --sport 1194 \
+	-m comment --comment "outbound OpenVPN (TCP) from OpenVPN" \
+	-j ACCEPT
+# outbound OpenVPN connections - negate 192.168.1.0/24 IP range - TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.4.2 ! -d 192.168.1.0/24 \
+	-p tcp --sport 1194 \
+	-m comment --comment "outbound OpenVPN (TCP) from OpenVPN" \
+	-j ACCEPT
+# outbound OpenVPN connections - negate 10.0.0.0/8 IP range - UDP
+iptables -A FORWARD -i eth0 -o eth1 -s 10.10.4.2 ! -d 10.0.0.0/8 -p tcp --dport 1194 -m comment --comment "outbound OpenVPN (UDP) from OpenVPN" -j ACCEPT
+# outbound OpenVPN connections - negate 192.168.1.0/24 IP range - UDP
+iptables -A FORWARD -i eth0 -o eth1 -s 10.10.4.2 ! -d 192.168.1.0/24 -p tcp --dport 1194 -m comment --comment "outbound OpenVPN (UDP) from OpenVPN" -j ACCEPT
+
+#### forward executive VLAN traffic to OpenVPN
+# OpenVPN connection to Executive VLAN
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.10.4.2 -d 10.10.11.0/24 \
+	-m comment --comment "OpenVPN connect to Executive VLAN" \
+	-j ACCEPT
+# ==================== #
+
+
+
+# === SSH traffic === #
+#### forward SSH traffic from Admin zone to other zones
+iptables -A FORWARD \
+	-i eth0 -o eth0 \
+	-s 10.10.5.0/24 -d 192.168.1.0/24,10.0.0.0/8 \
+	-p tcp --dport 22 \
+	-m comment --comment "SSH from admin zone" \
+	-j ACCEPT
+# ==================== #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ==================== #
+
+# -------------------------------------- #
+
+
+# ----------------------------------------------- #
+# ------ iptables SNAT/DNAT firewall rules ------ #
+# ----------------------------------------------- #
+
+# === internal traffic to out === #
+#### squid proxy traffic - web and DNS 
+iptables -t nat -A POSTROUTING -s 10.10.3.3 -o eth1 -j MASQUERADE
+	
+#### DNS traffic for Mail
+iptables -t nat -A POSTROUTING -s 10.10.2.3 -o eth1 -j MASQUERADE
+
+#### DNS traffic for remote access zone 
+iptables -t nat -A POSTROUTING -s 10.10.4.0/24 -o eth1 -j MASQUERADE
+# ================================== #
+
+
+# === public facing services === #
+#### Int-WWW web server
+# DNAT to internal IP 10.10.2.2 
+iptables -t nat -A PREROUTING -i eth1 \
+	-d 137.205.98.155 -p tcp -m multiport --dports 80,443 \
+	-m comment --comment "DNAT to Int-WWW web server" \
+	-j DNAT --to-destination 10.10.2.2
+# SNAT to public IP 137.205.98.155
+iptables -t nat -A POSTROUTING -o eth1 \
+	-s 10.10.2.2 -p tcp -m multiport --sports 80,443 \
+	-m comment --comment "DNAT from Int-WWW web server" \
+	-j SNAT --to-source 137.205.98.155
+	
+#### Mail server
+# DNAT to internal IP 10.10.2.3 
+iptables -t nat -A PREROUTING -i eth1 \
+	-d 137.205.139.114 -p tcp -m multiport --dports 25,587 \
+	-m comment --comment "DNAT to Mail email server" \
+	-j DNAT --to-destination 10.10.2.3
+# SNAT to public IP 137.205.139.114
+iptables -t nat -A POSTROUTING -o eth1 \
+	-s 10.10.2.3 -p tcp -m multiport --sports 80,443 \
+	-m comment --comment "DNAT from Mail email server" \
+	-j SNAT --to-source 137.205.139.114
+
+#### OpenVPN server
+# DNAT to internal IP 10.10.4.2
+# for UDP
+iptables -t nat -A PREROUTING -i eth1 -d 137.205.89.215 -p udp --dport 1194 \
+	-m comment --comment "DNAT to OpenVPN server (UDP)" \
+	-j DNAT --to-destination 10.10.4.2
+# for TCP
+iptables -t nat -A PREROUTING -i eth1 -d 137.205.89.215 -p tcp --dport 1194 \
+	-m comment --comment "DNAT to OpenVPN server (TCP)" \
+	-j DNAT --to-destination 10.10.4.2
+# SNAT to public IP 137.205.89.215
+# for UDP
+iptables -t nat -A POSTROUTING -o eth1 -s 10.10.4.2 -p udp --sport 1194 \
+	-m comment --comment "DNAT from OpenVPN server (UDP)" \
+	-j SNAT --to-source 137.205.89.215
+# for TCP
+iptables -t nat -A POSTROUTING -o eth1 -s 10.10.4.2 -p tcp --dport 1194 \
+	-m comment --comment "DNAT from OpenVPN server (TCP)" \
+	-j SNAT --to-source 137.205.89.215
+	
+	
+#### WireGuardVPN server
+# DNAT to internal IP 10.10.4.3
+iptables -t nat -A PREROUTING -i eth1 \
+	-d 137.205.89.220 -p udp --dport 51820 \
+	-m comment --comment "DNAT to WireGuardVPN server" \
+	-j DNAT --to-destination 10.10.4.3
+# SNAT to public IP 137.205.89.220
+iptables -t nat -A POSTROUTING -o eth1 \
+	-s 10.10.4.3 -p tcp -m multiport --sports 80,443 \
+	-m comment --comment "DNAT from WireGuardVPN server" \
+	-j SNAT --to-source 137.205.89.220
+
+# ================================== #
+	
+
+
+# ------------------------------------------ #
+
+
+
+
+
+

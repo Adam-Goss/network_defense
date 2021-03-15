@@ -1,0 +1,42 @@
+# Int-D1 - distribution network switch for MEME's Internal network subnet
+
+# for each of the five NICs eth1 .. eth5 
+for i in $(seq 5)
+do
+  # give it  its own MAC address
+  ip link set dev eth${i} address 08:00:4e:d1:d1:0${i}
+  # put it into a group (51 is arbitrary) so they can be treated the same
+  ip link set dev eth${i} group 51
+done
+
+# create the bridge named sw0 (typically br0 in online examples)
+ip link add sw0 type bridge
+ip link set dev sw0 address 08:00:4e:d1:d1:00
+
+# using group operations (on group 51 we created above):
+# make all of the network cards part of the switch 
+ip link set group 51 master sw0
+
+# bring each device up
+ip link set group 51 up
+
+# set each device to be promiscuous (so not restricted to own MAC address)
+ip link set group 51 promisc on
+
+# since we have loops ensure, spanning tree is active
+brctl stp sw0 on
+brctl setbridgeprio sw0 100
+
+# ensure  sw0 is vlan-aware
+echo "1" > /sys/class/net/sw0/bridge/vlan_filtering
+
+# make all ports carry all non-default vlan traffic
+for i in $(seq 5)
+do
+  bridge vlan add vid 2-4094 dev eth${i}
+done
+
+# lastly, bring the bridge up
+ip link set dev sw0 up
+
+

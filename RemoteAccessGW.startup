@@ -1,0 +1,181 @@
+# RemoteAccessGW - RemoteAccess LAN's gateway machine to PerimF (perimeter firewall)
+
+
+# === network iface config === #
+# iface connected to RemoteAccess LAN 
+ifconfig eth0 10.10.4.1/24
+ifconfig eth0 hw ether 1a:1b:1c:a2:a2:a2
+
+# iface connected to perimeter firewall (PerimF)
+ifconfig eth1 192.168.1.104/24
+ifconfig eth1 hw ether 80:80:80:82:82:82
+
+# PerimF = default gateway
+route add default gw 192.168.1.1
+# ============================= #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ----------------------------------------- #
+# ---- Remote Access  firewall rules ------ #
+# ----------------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I FORWARD 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === OpenVPN rules === #
+#### forward encrypted OpenVPN traffic (1194) from any external IP addresses to OpenVPN
+## for TCP
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.4.2 \
+	-p tcp --dport 1194 \
+	-m comment --comment "inbound OpenVPN (TCP) traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.4.2 \
+	-p tcp --dport 1194 \
+	-m comment --comment "inbound OpenVPN (TCP) traffic from outside" \
+	-j ACCEPT
+## for UDP
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.4.2 \
+	-p udp --dport 1194 \
+	-m comment --comment "inbound OpenVPN (UDP) traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.4.2 \
+	-p udp --dport 1194 \
+	-m comment --comment "inbound OpenVPN (UDP) traffic from outside" \
+	-j ACCEPT
+	
+#### forward unencrypted OpenVPN traffic to Executive VLAN
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.4.2 -d 10.10.11.0/24 \
+	-m comment --comment "outbound OpenVPN traffic to Executive VLAN" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === mail traffic rules === #
+#### forward IMAP traffic (993) from Remote Access zone to Mail
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.4.0/24 -d 10.10.2.3 \
+	-p tcp --dport 993 \
+	-m comment --comment "outbound IMAP traffic to Mail server" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === Wireguard VPN rules === #
+#### forward encrypted Wireguard traffic (1194) from any external IP addresses to WireGuardVPN
+## for UDP
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.4.3 \
+	-p udp --dport 51280 \
+	-m comment --comment "inbound Wireguard traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.4.3 \
+	-p udp --dport 51280 \
+	-m comment --comment "inbound Wireguard traffic from outside" \
+	-j ACCEPT
+	
+#### forward unencrypted OpenVPN traffic to Executive VLAN
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.4.3 -d 10.100.0.0/16 \
+	-m comment --comment "outbound Wireguard traffic to Employee VLAN" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === DNS traffic rules === #
+#### forward DNS traffic to Int-DNS from Remote Access zone
+# using UDP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.4.0/24 -d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Remote Access zone" \
+	-j ACCEPT
+# using TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.4.0/24 -d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) traffic from Remote Access zone" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === SSH traffic === #
+#### forward SSH traffic from Admin zone to other zones
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	-s 10.10.5.0/24 -d 10.10.4.0/24\
+	-p tcp --dport 22 \
+	-m comment --comment "SSH from admin zone" \
+	-j ACCEPT
+# ==================== #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth1 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth1 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+# -------------------------------------- #
+
+

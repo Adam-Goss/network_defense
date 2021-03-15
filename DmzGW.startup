@@ -1,0 +1,184 @@
+# DmzGW - DMZ LAN's gateway machine to PerimF (perimeter firewall)
+
+
+# === network iface config === #
+# iface connected to DMZ LAN 
+ifconfig eth0 10.10.2.1/24
+ifconfig eth0 hw ether 1a:1b:1c:a2:a2:a2
+
+# iface connected to perimeter firewall (PerimF)
+ifconfig eth1 192.168.1.102/24
+ifconfig eth1 hw ether 80:80:80:82:82:82
+
+# PerimF = default gateway
+route add default gw 192.168.1.1
+# ============================ #
+
+
+# === Suricata config === #
+# install suricata by executing scripts in /root directory
+# run script: ./install_suricata.sh
+# run script: ./run_suricata.sh
+# ======================= #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ------------------------------- #
+# ---- DMZ  firewall rules ------ #
+# ------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I FORWARD 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === web traffic rules === #
+#### forward web traffic (80, 443) from any external IP addresses to Int-WWW
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.2.2 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "inbound HTTP/HTTPS traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.2.2 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "inbound HTTP/HTTPS traffic from outside" \
+	-j ACCEPT
+	
+#### forward web traffic (80, 443) from Int-WWW to external IP addresses
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.2.2 ! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Int-WWW" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.2.2 ! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Int-WWW" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === mail traffic rules === #
+#### forward SMTP traffic (25, 587) from any external IP addresses to Mail
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 10.0.0.0/8 -d 10.10.2.3 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "inbound SMTP traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth1 -o eth0 \
+	! -s 192.168.1.0/24 -d 10.10.2.3 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "inbound SMTP traffic from outside" \
+	-j ACCEPT
+	
+#### forward SMTP traffic (25, 587) from Mail to external IP addresses
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.2.3 ! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "outbound SMTP traffic from Mail" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.2.3 ! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "outbound SMTP traffic from Mail" \
+	-j ACCEPT
+	
+#### forward IMAP traffic (993) to Mail from Executive/Employee VLAN & Remote Access zone
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	-d 10.10.2.3 -s 10.10.11.0/24,10.100.0.0/8,10.10.4.0/24 \
+	-p tcp --dport 993 \
+	-m comment --comment "inbound IMAP internal hosts" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === DNS traffic rules === #
+#### forward DNS traffic to external DNS (8.8.8.8) from Mail and Int-WWW
+# using UDP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.2.3,10.10.2.2 -d 8.8.8.8 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Mail/Int-WWW" \
+	-j ACCEPT
+# using TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.2.3,10.10.2.2 -d 8.8.8.8 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Mail/Int-WWW" \
+	-j ACCEPT
+# ============================================= #
+
+
+# === SSH traffic === #
+#### forward SSH traffic from Admin zone to other zones
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	-s 10.10.5.0/24 -d 10.10.2.0/24\
+	-p tcp --dport 22 \
+	-m comment --comment "SSH from admin zone" \
+	-j ACCEPT
+# ==================== #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth1 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth1 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+# -------------------------------------- #
+

@@ -1,0 +1,3 @@
+# test - machine to download packages from the Internet 
+
+iptables -t nat -A POSTROUTING -o eth20 -j MASQUERADE

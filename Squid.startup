@@ -1,0 +1,131 @@
+# Squid - squid proxy machine on server LAN
+
+
+# === network iface config === #
+# LAN iface config
+ifconfig eth0 10.10.3.3/24
+ifconfig eth0 hw ether 0a:60:ac:48:bc:02
+route add default gw 10.10.3.1
+# ============================ #
+
+
+# === squid config === #
+#### creating access log
+touch /var/log/squid/access.log
+chmod 777 /var/log/squid/access.log
+
+#### creating cache directory
+mkdir /etc/squid/cache/
+chmod 777 /etc/squid/cache/
+
+#### changing ownership of passwd file for authentication
+chown proxy: /etc/squid/passwd
+
+#### starting squid proxy service
+systemctl start squid.service
+# ===================== #
+
+
+# === SSH config === #
+# create admin1 user
+useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# --------------------------------- #
+# ----- Squid firewall rules ------ #
+# --------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I INPUT 2 -m state --state INVALID -j DROP
+iptables -I OUTPUT 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === web traffic rules === #
+#### send HTTP/HTTPS traffic to external IP addresses (auto stateful receive)
+# negate 10.0.0.0/8 IP range 
+iptables -A OUTPUT -o eth0 \
+	! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Squid" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A OUTPUT -o eth0 \
+	! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Squid" \
+	-j ACCEPT
+# ============================================= #
+
+
+# === squid traffic rules === #
+#### receive squid traffic from Executive/Employee VLANs (auto stateful send)
+# for TCP
+iptables -A INPUT -i eth0 -s 10.10.11.0/24,10.100.0.0/16 \
+	-m comment --comment "inbound squid traffic from Executive/Employee VLANs" \
+	-j ACCEPT
+	
+iptables -A OUTPUT -o eth0 -d 10.10.11.0/24,10.100.0.0/16 \
+	-m comment --comment "outbound squid traffic from Squid" \
+	-j ACCEPT
+
+# ============================================= #
+
+
+# === DNS traffic rules === #
+#### send DNS traffic to external DNS (8.8.8.8) (auto stateful send)
+# for TCP
+iptables -A OUTPUT -o eth0 -d 8.8.8.8 -p tcp --dport 53 \
+	-m comment --comment "outbound DNS (TCP) to external DNS (8.8.8.8)" \
+	-j ACCEPT	
+# for UDP
+iptables -A OUTPUT -o eth0 -d 8.8.8.8 -p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) to external DNS (8.8.8.8)" \
+	-j ACCEPT	
+# ============================================= #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+# -------------------------------------- #

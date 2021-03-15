@@ -1,0 +1,156 @@
+# SrvGW - server LAN's gateway machine to PerimF (perimeter firewall)
+
+
+# === network iface config === #
+# iface connected to server LAN 
+ifconfig eth0 10.10.3.1/24
+ifconfig eth0 hw ether 1a:1b:1c:a3:a3:a3
+
+# iface connected to perimeter firewall (PerimF)
+ifconfig eth1 192.168.1.103/24
+ifconfig eth1 hw ether 80:80:80:83:83:83
+
+# PerimF = default gateway
+route add default gw 192.168.1.1
+# ============================ #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ------------------------------- #
+# ----- SRV firewall rules ------ #
+# ------------------------------- #
+
+# === basic rules === #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I FORWARD 2 -m state --state INVALID -j DROP
+# ==================== #
+
+
+# === Squid traffic rules === #	
+#### forward web traffic (80, 443) from Squid to external IP addresses
+# negate 10.0.0.0/8 IP range 
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.3.3 ! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Squid" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A FORWARD -i eth0 -o eth1 \
+	-s 10.10.3.3 ! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "outbound HTTP/HTTPS traffic from Squid" \
+	-j ACCEPT
+	
+	
+#### forward squid traffic to Squid from Executive/Employee VLANs
+#iptables -A FORWARD -i eth1 -o eth0 \
+#	-s 10.100.0.0/16,10.10.11.0/24 -d 10.10.3.3 \
+#	-p tcp -m multiport --dports 3128,3129 \
+#	-m comment --comment "inbound squid proxy traffic to Squid" \
+#	-j ACCEPT
+iptables -A FORWARD -i eth1 -o eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24 -d 10.10.3.3 \
+	-m comment --comment "inbound squid proxy traffic to Squid" \
+	-j ACCEPT
+iptables -A FORWARD -o eth1 -i eth0 \
+	-d 10.100.0.0/16,10.10.11.0/24 -s 10.10.3.3 \
+	-m comment --comment "outbound squid proxy traffic to Squid" \
+	-j ACCEPT
+
+
+#### forward squid DNS traffic to external DNS server (8.8.8.8)
+# using UDP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.3.3 -d 8.8.8.8 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Squid" \
+	-j ACCEPT
+# using TCP
+iptables -A FORWARD \
+	-i eth0 -o eth1 \
+	-s 10.10.3.3 -d 8.8.8.8 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Squid" \
+	-j ACCEPT
+# ============================================= #
+
+
+
+# === DNS traffic rules === #
+#### forward DNS traffic from Remote Access zone, all 3 internal VLANs, admin zone to Int-DNS
+# using UDP
+iptables -A FORWARD -i eth1 -o eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24,10.10.4.0/24,10.10.33.0/24,10.10.5.0/24 \
+	-d 10.10.3.2 \
+	-p udp --dport 53 \
+	-m comment --comment "inbound DNS (UDP) traffic to Int-DNS" \
+	-j ACCEPT
+# using TCP
+iptables -A FORWARD -i eth1 -o eth0 \
+	-s 10.100.0.0/16,10.10.11.0/24,10.10.4.0/24,10.10.33.0/24,10.10.5.0/24
+	-d 10.10.3.2 \
+	-p tcp --dport 53 \
+	-m comment --comment "inbound DNS (UDP) traffic to Int-DNS" \
+	-j ACCEPT
+# ============================================= #
+
+
+# === SSH traffic === #
+#### forward SSH traffic from Admin zone to other zones
+iptables -A FORWARD \
+	-i eth1 -o eth0 \
+	-s 10.10.5.0/24 -d 10.10.3.0/24\
+	-p tcp --dport 22 \
+	-m comment --comment "SSH from admin zone" \
+	-j ACCEPT
+# ==================== #
+
+
+# === management traffic === #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth1 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth1 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+# -------------------------------------- #
+

@@ -1,0 +1,133 @@
+# Int-WWW - internal web server machine on DMZ LAN
+
+
+# === network iface config === #
+# LAN iface config 
+ifconfig eth0 hw ether 02:60:fc:af:a9:44
+ifconfig eth0 10.10.2.2/24
+route add default gw 10.10.2.1
+# ============================ #
+
+# === web server config === #
+a2enmod ssl
+a2ensite default-ssl
+service apache2 start
+# ========================= #
+
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change ownership of /etc/www directory so admin1 can make file changes
+# (don't need if admin1 is in sudoers, but example of what can be done)
+chown -R admin1 /etc/www
+
+# change permissions on SSH authorized_keys - need in real world
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# --------------------------------------- #
+# -------- Int-WWW firewall rules ------- #
+# --------------------------------------- #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I INPUT 2 -m state --state INVALID -j DROP
+iptables -I OUTPUT 2 -m state --state INVALID -j DROP
+
+
+# ============ web traffic rules ============ #
+#### receive web traffic (ports 80, 443) from any external address
+# negate 10.0.0.0/8 IP range 
+iptables -A INPUT -i eth0 \
+	! -s 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "recieve web traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A INPUT -i eth0 \
+	! -s 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "recieve web traffic from outside" \
+	-j ACCEPT
+
+#### send web traffic (ports 80, 443) to any external address
+# negate 10.0.0.0/8 IP range 
+iptables -A OUTPUT -o eth0 \
+	! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "send web traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A OUTPUT -o eth0 \
+	! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 80,443 \
+	-m comment --comment "send web traffic from outside" \
+	-j ACCEPT
+# ================================================= #
+	
+	
+	
+# ======== DNS traffic rules ======== #
+#### send DNS traffic to external DNS (8.8.8.8) from Int-WWW
+# using UDP
+iptables -A OUTPUT -o eth0 -d 8.8.8.8 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Int-WWW" \
+	-j ACCEPT
+# using TCP
+iptables -A OUTPUT -o eth0 -d 8.8.8.8 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Int-WWW" \
+	-j ACCEPT	
+# ================================================== #
+	
+
+# ======== management traffic ======== #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+	
+	
+	
+	
+	
+	
+	
+	
+	

@@ -1,0 +1,12 @@
+# Ext-DNS - external DNS machine for Internet-connected machines 
+
+
+# === network iface config === #
+ifconfig eth0 8.8.8.8/24
+route add default gw 8.8.8.1
+# ============================= #
+
+
+# === DNS config === #
+service dnsmasq start
+# =================== #

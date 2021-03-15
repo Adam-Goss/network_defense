@@ -1,0 +1,135 @@
+# staff-3 - staff machine on internal LAN
+
+
+# === network iface config === #
+# LAN iface config
+ifconfig eth0 hw ether 02:60:ac:4f:bc:02
+ifconfig eth0 10.10.2.3/24
+route add default gw 10.10.2.1
+# ============================ #
+
+
+# === mail server config === #
+# stop default mail service (exim4) running on 127.0.0.1:25
+service exim4 stop
+
+# mimic mail server open ports
+while true; do nc -lvp 25;done &
+while true; do nc -lvp 587;done &
+while true; do nc -lvp 993;done &
+# ============================ #
+
+
+# === SSH config === #
+# create admin1 user
+sudo useradd admin1 -s /bin/bash -d /home/admin1
+echo "admin1:pass" | chpasswd
+
+# add user to sudoers group (so can make system changes)
+usermod -a -G sudo admin1
+
+# change permissions on SSH authorized_keys
+#chmod 700 /home/admin1/.ssh
+#chmod 600 /home/admin1/.ssh/authorized_keys
+
+# start SSH server
+service ssh start
+# ===================== #
+
+
+# ---------------------------------- #
+# -------- Mail server rules ------- #
+# ---------------------------------- #
+#### default polices
+# INPUT chain = drop
+iptables -P INPUT DROP
+# OUTPUT chain = drop
+iptables -P OUTPUT DROP
+# FORWARD chain = drop
+iptables -P FORWARD DROP
+
+
+#### allow stateful rules
+# accept establish/related packets
+iptables -I INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -m state --state RELATED,ESTABLISHED -j ACCEPT 
+# deny invalid packets
+iptables -I INPUT 2 -m state --state INVALID -j DROP
+iptables -I OUTPUT 2 -m state --state INVALID -j DROP
+
+
+# ============ email traffic rules ============ #
+#### receive SMTP traffic (ports 25, 587) from any external address
+# negate 10.0.0.0/8 IP range 
+iptables -A INPUT -i eth0 \
+	! -s 10.0.0.0/8 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "recieve web traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A INPUT -i eth0 \
+	! -s 192.168.1.0/24 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "recieve web traffic from outside" \
+	-j ACCEPT
+
+#### send SMTP traffic (ports 25, 587) to any external address
+# negate 10.0.0.0/8 IP range 
+iptables -A OUTPUT -o eth0 \
+	! -d 10.0.0.0/8 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "send web traffic from outside" \
+	-j ACCEPT
+# negate 192.168.1.0/24 IP range
+iptables -A OUTPUT -o eth0 \
+	! -d 192.168.1.0/24 \
+	-p tcp -m multiport --dports 25,587 \
+	-m comment --comment "send web traffic from outside" \
+	-j ACCEPT
+	
+#### receive IMAP traffic (port 993) from Executive/Employee VLAN & Remote Access zone (auto stateful reply)
+iptables -A INPUT -i eth0 \
+	-s 10.10.11.0/24,10.100.0.0/8,10.10.4.0/24 \
+	-p tcp --dport 993 \
+	-m comment --comment "inbound IMAP internal hosts" \
+	-j ACCEPT
+# ================================================= #
+	
+	
+	
+# ======== DNS traffic rules ======== #
+#### send DNS traffic to external DNS (8.8.8.8) from Mail
+# using UDP
+iptables -A OUTPUT -o eth0 -d 8.8.8.8 \
+	-p udp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Mail" \
+	-j ACCEPT
+# using TCP
+iptables -A OUTPUT -o eth0 -d 8.8.8.8 \
+	-p tcp --dport 53 \
+	-m comment --comment "outbound DNS (UDP) traffic from Mail" \
+	-j ACCEPT	
+# ================================================== #
+	
+	
+
+# ======== management traffic ======== #
+#### send/recieve SSH traffic from Admin zone 
+# recieve SSH traffic
+iptables -A INPUT \
+	-i eth0 \
+	-s 10.10.5.0/24 \
+	-p tcp --dport 22 \
+	-m comment --comment "recieve SSH from admin zone" \
+	-j ACCEPT
+# send SSH traffic
+iptables -A OUTPUT \
+	-o eth0 \
+	-d 10.10.5.0/24 \
+	-p tcp --sport 22 \
+	-m comment --comment "send SSH to admin zone" \
+	-j ACCEPT
+# ============================================= #
+
+
+# ---------------------------------------------------------- #

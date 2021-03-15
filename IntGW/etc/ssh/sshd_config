@@ -1,0 +1,159 @@
+#	$OpenBSD: sshd_config,v 1.103 2018/04/09 20:41:22 tj Exp $
+
+# This is the sshd server system-wide configuration file.  See
+# sshd_config(5) for more information.
+
+# This sshd was compiled with PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# The strategy used for options in the default sshd_config shipped with
+# OpenSSH is to specify options with their default value where
+# possible, but leave them commented.  Uncommented options override the
+# default value.
+
+
+#### client specific options - not needed here
+#Include /etc/ssh/sshd_config.d/*.conf
+
+
+#Port 22
+#AddressFamily any
+#ListenAddress 0.0.0.0
+#ListenAddress ::
+
+#HostKey /etc/ssh/ssh_host_rsa_key
+#HostKey /etc/ssh/ssh_host_ecdsa_key
+#HostKey /etc/ssh/ssh_host_ed25519_key
+
+#### Ciphers and keying
+#RekeyLimit default none
+# ciphers
+Ciphers aes128-ctr,aes192-ctr,aes256-ctr
+# MACs
+MACs hmac-sha2-256,hmac-sha2-512
+# host key algorithms 
+HostKeyAlgorithms ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-rsa,ssh-dss
+# kex algorithms 
+KexAlgorithms ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256
+
+
+#### Logging
+SyslogFacility AUTH
+# LogLevel DEBUG
+# set to info to remove detailed errors
+LogLevel INFO
+
+
+#### set to lower value to prevent certain DoS attacks 
+LoginGraceTime 20
+#### disable root login
+PermitRootlogin no
+#PermitRootLogin prohibit-password
+#### CHANGE TO YES IN REAL WORLD DEPLOYMENT (outside of Netkit with fixed file permissions)
+StrictModes no
+#### limit the max number of auth attempts for a particular session
+MaxAuthTries 3
+#MaxSessions 10
+
+#### use public key authentication
+PubkeyAuthentication yes
+
+#### where to look for authorized_keys
+AuthorizedKeysFile /etc/ssh/%u/authorized_keys
+
+#AuthorizedPrincipalsFile none
+
+#AuthorizedKeysCommand none
+#AuthorizedKeysCommandUser nobody
+
+# For this to work you will also need host keys in /etc/ssh/ssh_known_hosts
+#HostbasedAuthentication no
+# Change to yes if you don't trust ~/.ssh/known_hosts for
+# HostbasedAuthentication
+#IgnoreUserKnownHosts no
+
+#### disable this - weak authentication method
+# Don't read the user's ~/.rhosts and ~/.shosts files
+IgnoreRhosts yes
+
+#### enable public key authentication and no passwords 
+# To disable tunneled clear text passwords, change to no here!
+PasswordAuthentication no
+PermitEmptyPasswords no
+
+#### weak authentication, but needed to work
+# Change to yes to enable challenge-response passwords (beware issues with
+# some PAM modules and threads)
+ChallengeResponseAuthentication no
+
+# Kerberos options
+#### not needed here
+KerberosAuthentication no
+#KerberosOrLocalPasswd yes
+#KerberosTicketCleanup yes
+#KerberosGetAFSToken no
+
+# GSSAPI options
+### not needed here
+GSSAPIAuthentication no
+#GSSAPICleanupCredentials yes
+#GSSAPIStrictAcceptorCheck yes
+#GSSAPIKeyExchange no
+
+# Set this to 'yes' to enable PAM authentication, account processing,
+# and session processing. If this is enabled, PAM authentication will
+# be allowed through the ChallengeResponseAuthentication and
+# PasswordAuthentication.  Depending on your PAM configuration,
+# PAM authentication via ChallengeResponseAuthentication may bypass
+# the setting of "PermitRootLogin without-password".
+# If you just want the PAM account and session checks to run without
+# PAM authentication, then enable this but set PasswordAuthentication
+# and ChallengeResponseAuthentication to 'no'.
+#### needed to work
+UsePAM yes
+
+#### disable tunnelling/forwarding incase of breach - not needed
+AllowAgentForwarding no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+GatewayPorts no
+#### don't need GUI here (cut down attack surface) - not needed
+X11Forwarding no
+#X11DisplayOffset 10
+#X11UseLocalhost yes
+#PermitTTY yes
+PrintMotd no
+#PrintLastLog yes
+#TCPKeepAlive yes
+#### don't pass client custom ENV variables (terminal settings) - not needed
+PermitUserEnvironment no
+#Compression delayed
+#ClientAliveInterval 0
+#ClientAliveCountMax 3
+#UseDNS no
+#PidFile /var/run/sshd.pid
+#MaxStartups 10:30:100
+#ChrootDirectory none
+#VersionAddendum none
+
+#### display a banner stating MEME legal warnings
+# no default banner path
+Banner /etc/ssh/MEME_banner
+
+# Allow client to pass locale environment variables
+AcceptEnv LANG LC_*
+
+# override default of no subsystems
+Subsystem	sftp	/usr/lib/openssh/sftp-server
+
+
+#### only allow users from Admin zone 
+AllowUsers *@10.10.5.0/24
+
+
+# Example of overriding settings on a per-user basis
+#Match User anoncvs
+#	X11Forwarding no
+#	AllowTcpForwarding no
+#	PermitTTY no
+#	ForceCommand cvs server

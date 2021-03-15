@@ -1,0 +1,6 @@
+# AusCollab - MEME's Australian collaborator (behind Wireguard iface)
+
+# === network iface config === #
+ifconfig eth0 66.66.66.66/24
+route add default gw 66.66.66.1
+# ============================ #
